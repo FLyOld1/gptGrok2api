@@ -6,7 +6,7 @@ import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useToast } from '@/composables/useToast'
 import type { useAccountBulkProgressRuntime } from './accountBulkProgressRuntime'
 
-export type AccountImportMode = 'oauth_login' | 'access_token' | 'session_json' | 'cpa_json' | 'remote_cpa' | 'sub2api'
+export type AccountImportMode = 'oauth_login' | 'access_token' | 'refresh_token' | 'session_json' | 'cpa_json' | 'remote_cpa' | 'sub2api'
 
 const IMPORT_BATCH_SIZE = 20
 
@@ -27,6 +27,30 @@ function parseTokenLines(text: string) {
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith('#')),
+  )
+}
+function extractRefreshTokenFromLine(raw: string): string {
+  const line = raw.trim()
+  if (!line || line.startsWith('#')) return ''
+  if (line.includes('----')) {
+    const parts = line.split('----')
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const candidate = parts[i].trim()
+      if (!candidate) continue
+      if (candidate.startsWith('rt_')) return candidate
+      if (candidate.length >= 20 && !candidate.includes('@')) return candidate
+    }
+    if (parts.length > 0) return parts[parts.length - 1].trim()
+  }
+  return line
+}
+
+function parseRefreshTokenLines(text: string) {
+  return uniqueTokens(
+    text
+      .split(/\r?\n/)
+      .map(extractRefreshTokenFromLine)
+      .filter(Boolean),
   )
 }
 
@@ -97,6 +121,7 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
   const oauthAuthorizeUrl = ref('')
   const oauthRedirectUriPrefix = ref('')
   const manualTokenText = ref('')
+  const manualRefreshTokenText = ref('')
   const sessionJsonText = ref('')
   const toast = useToast()
   const confirmDialog = useConfirmDialog()
@@ -104,6 +129,7 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
   const importModeOptions = [
     { label: 'OAuth 登录已有账号', value: 'oauth_login' },
     { label: '导入 Access Token', value: 'access_token' },
+    { label: '导入 Refresh Token', value: 'refresh_token' },
     { label: '导入 Session JSON', value: 'session_json' },
     { label: '导入 CPA JSON 文件', value: 'cpa_json' },
     { label: '从远程 CPA 服务器导入', value: 'remote_cpa' },
@@ -264,7 +290,92 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
   async function importManualTokenText() {
     await importTokenBatch(parseTokenLines(manualTokenText.value), 'manual', '导入 Access Token')
   }
+  async function importRefreshTokenBatch(tokens: string[], sourceType: string, title: string) {
+    const normalizedTokens = uniqueTokens(tokens)
+    if (!normalizedTokens.length) {
+      toast.warning('没有可导入的 refresh token')
+      return
+    }
 
+    const confirmed = await confirmDialog.ask({
+      title,
+      message: `即将导入 ${normalizedTokens.length} 个 Refresh Token 并自动换取 Access Token，是否继续？`,
+      confirmText: '确认导入',
+      cancelText: '取消',
+    })
+    if (!confirmed) return
+
+    importBusy.value = true
+    options.bulkProgress.start(title, normalizedTokens.length, 'mutation')
+    let addedCount = 0
+    let skippedCount = 0
+    let refreshedCount = 0
+    let processed = 0
+    const errors: string[] = []
+    try {
+      for (let index = 0; index < normalizedTokens.length; index += IMPORT_BATCH_SIZE) {
+        if (options.bulkProgress.bulkStopRequested.value) break
+        const batch = normalizedTokens.slice(index, index + IMPORT_BATCH_SIZE)
+        try {
+          const result = await accountsApi.importRefreshTokens(batch, sourceType)
+          addedCount += Number(result.added || 0)
+          skippedCount += Number(result.skipped || 0)
+          refreshedCount += Number(result.refreshed || 0)
+          errors.push(...(Array.isArray(result.errors) ? result.errors.filter(Boolean) : []))
+        } catch (error) {
+          errors.push(`${batch[0]?.slice(0, 6) || '-'}... 等 ${batch.length} 个账号：${options.normalizeErrorMessage(error)}`)
+        } finally {
+          processed = Math.min(normalizedTokens.length, processed + batch.length)
+          options.bulkProgress.update({
+            total: normalizedTokens.length,
+            processed,
+            done: processed >= normalizedTokens.length,
+            total_quota: 0,
+          })
+        }
+      }
+
+      await options.loadData({ silentErrorToast: true })
+      const stopped = options.bulkProgress.bulkStopRequested.value && processed < normalizedTokens.length
+      options.bulkProgress.finish({
+        total: normalizedTokens.length,
+        processed,
+        total_quota: 0,
+      })
+      if (stopped) {
+        toast.warning(`${title}已停止：已处理 ${processed}/${normalizedTokens.length} 个`)
+      } else if (errors.length > 0) {
+        toast.warning(`${title}完成：新增 ${addedCount}，跳过 ${skippedCount}，刷新 ${refreshedCount}，失败 ${errors.length}`)
+      } else {
+        toast.success(`${title}完成：新增 ${addedCount}，跳过 ${skippedCount}，刷新 ${refreshedCount}`)
+      }
+      if (addedCount + skippedCount + refreshedCount > 0) {
+        manualRefreshTokenText.value = ''
+      }
+    } catch (error) {
+      options.bulkProgress.finish({
+        total: normalizedTokens.length,
+        processed,
+        error: options.normalizeErrorMessage(error),
+        total_quota: 0,
+      })
+      options.setError(`${title}失败`, error)
+    } finally {
+      importBusy.value = false
+      options.bulkProgress.end()
+    }
+  }
+
+  async function importManualRefreshTokenText() {
+    await importRefreshTokenBatch(parseRefreshTokenLines(manualRefreshTokenText.value), 'refresh_token', '导入 Refresh Token')
+  }
+
+  async function importRefreshTokenTextFile(file: File | null | undefined) {
+    if (!file) return
+    const text = await file.text()
+    manualRefreshTokenText.value = text
+    await importManualRefreshTokenText()
+  }
   async function importTokenTextFile(file: File | null | undefined) {
     if (!file) return
     const text = await file.text()
@@ -385,12 +496,15 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
     oauthAuthorizeUrl,
     oauthRedirectUriPrefix,
     manualTokenText,
+    manualRefreshTokenText,
     sessionJsonText,
     setImportMode,
     openImportModal,
     closeImportModal,
     importManualTokenText,
     importTokenTextFile,
+    importManualRefreshTokenText,
+    importRefreshTokenTextFile,
     importSessionJson,
     startOAuthLogin,
     openOAuthAuthorizeUrl,

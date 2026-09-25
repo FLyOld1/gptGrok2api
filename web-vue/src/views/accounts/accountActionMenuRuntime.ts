@@ -45,6 +45,7 @@ const BIND_ACCOUNT_GROUP_ACTION_PREFIX = 'bind_group:'
 const accountImportActions = new Set<AccountImportMode>([
   'oauth_login',
   'access_token',
+  'refresh_token',
   'session_json',
   'cpa_json',
   'remote_cpa',
@@ -105,6 +106,7 @@ export function useAccountActionMenuRuntime(options: AccountActionMenuRuntimeOpt
     [
       { key: 'oauth_login', label: 'OAuth 登录已有账号' },
       { key: 'access_token', label: '导入 Access Token' },
+      { key: 'refresh_token', label: '导入 Refresh Token' },
       { key: 'session_json', label: '导入 Session JSON' },
       { key: 'cpa_json', label: '导入 CPA JSON 文件' },
       { key: 'remote_cpa', label: '从远程 CPA 服务器导入' },

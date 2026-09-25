@@ -236,6 +236,7 @@ export function useAccountsPage() {
   const oauthAuthorizeUrl = accountImport.oauthAuthorizeUrl
   const oauthRedirectUriPrefix = accountImport.oauthRedirectUriPrefix
   const manualTokenText = accountImport.manualTokenText
+  const manualRefreshTokenText = accountImport.manualRefreshTokenText
   const sessionJsonText = accountImport.sessionJsonText
 
   const accountBulkActions = useAccountBulkActionsRuntime({
@@ -369,6 +370,8 @@ export function useAccountsPage() {
   const closeImportModal = accountImport.closeImportModal
   const importManualTokenText = accountImport.importManualTokenText
   const importTokenTextFile = accountImport.importTokenTextFile
+  const importManualRefreshTokenText = accountImport.importManualRefreshTokenText
+  const importRefreshTokenTextFile = accountImport.importRefreshTokenTextFile
   const importSessionJson = accountImport.importSessionJson
   const startOAuthLogin = accountImport.startOAuthLogin
   const openOAuthAuthorizeUrl = accountImport.openOAuthAuthorizeUrl
@@ -455,6 +458,7 @@ export function useAccountsPage() {
     oauthAuthorizeUrl,
     oauthRedirectUriPrefix,
     manualTokenText,
+    manualRefreshTokenText,
     sessionJsonText,
     accountGroups,
     proxyGroups,
@@ -515,6 +519,8 @@ export function useAccountsPage() {
     setAccountGroupCustomProxyInput,
     importManualTokenText,
     importTokenTextFile,
+    importManualRefreshTokenText,
+    importRefreshTokenTextFile,
     importSessionJson,
     startOAuthLogin,
     openOAuthAuthorizeUrl,

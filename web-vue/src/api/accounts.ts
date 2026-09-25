@@ -873,6 +873,34 @@ export const accountsApi = {
       }))
     return accountsApi.importAccounts(accounts, sourceType)
   },
+  importRefreshTokens: async (
+    tokens: string[],
+    fallbackSourceType = 'refresh_token',
+  ) => {
+    const refreshTokens = Array.from(new Set(tokens.map((token) => cleanString(token)).filter(Boolean)))
+    if (!refreshTokens.length) {
+      return { status: 'ok', added: 0, skipped: 0, refreshed: 0, errors: [] as string[] }
+    }
+    const response = await apiClient.post<
+      {
+        refresh_tokens: string[]
+        source_type: string
+      },
+      BackendAccountMutationResponse
+    >('/api/accounts/import-refresh-tokens', {
+      refresh_tokens: refreshTokens,
+      source_type: fallbackSourceType,
+    })
+    return {
+      status: 'ok',
+      added: Number(response.added || 0),
+      skipped: Number(response.skipped || 0),
+      refreshed: Number(response.refreshed || 0),
+      errors: Array.isArray(response.errors)
+        ? response.errors.map((item) => (typeof item === 'string' ? item : [item.token, item.error].filter(Boolean).join(': '))).filter(Boolean)
+        : [],
+    }
+  },
 
   cleanupImportedAbnormalAccounts: async (tokens: string[], remove = false) => {
     const accessTokens = Array.from(new Set(tokens.map((token) => cleanString(token)).filter(Boolean)))

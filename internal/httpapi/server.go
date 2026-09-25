@@ -296,6 +296,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/accounts/oauth/finish", s.accountOAuthFinish)
 	mux.HandleFunc("/api/accounts/export", s.accountExport)
 	mux.HandleFunc("/api/accounts/import-api", s.importAccountsAPI)
+	mux.HandleFunc("/api/accounts/import-refresh-tokens", s.importRefreshTokensAPI)
 	mux.HandleFunc("/api/accounts/agent-identities", s.agentIdentities)
 	mux.HandleFunc("/api/accounts/import-cleanup", s.cleanupImportedAbnormalAccounts)
 	mux.HandleFunc("/api/accounts/update", s.updateAccount)

@@ -943,6 +943,26 @@
                     </Button>
                   </div>
                 </div>
+                <div v-else-if="importMode === 'refresh_token'" class="space-y-3">
+                  <ImportModePanel
+                    title="导入 Refresh Token"
+                    description="支持直接粘贴，一行一个；也支持从 TXT 文件读取，一行一个。导入后将自动通过 OAuth 换取 Access Token，支持自动续期。"
+                  />
+                  <textarea
+                    v-model.trim="manualRefreshTokenText"
+                    rows="10"
+                    class="ui-textarea-sm font-mono"
+                    placeholder="一行一个 refresh token（也支持 email----password----client_id----refresh_token 等多段格式）"
+                  ></textarea>
+                  <div class="flex flex-wrap justify-end gap-2">
+                    <Button size="xs" variant="outline" :disabled="importBusy" @click="openManualRefreshTokenFile">
+                      读取 TXT 文件
+                    </Button>
+                    <Button size="xs" variant="primary" :disabled="importBusy || !manualRefreshTokenText.trim()" @click="importManualRefreshTokenText">
+                      {{ importBusy ? '导入中...' : '开始导入' }}
+                    </Button>
+                  </div>
+                </div>
 
                 <div v-else-if="importMode === 'session_json'" class="space-y-3">
                   <ImportModePanel
@@ -1022,6 +1042,7 @@
     </ModalShell>
 
     <input ref="manualTokenFileInputRef" type="file" accept=".txt,text/plain" class="hidden" @change="handleManualTokenFileChange" />
+    <input ref="manualRefreshTokenFileInputRef" type="file" accept=".txt,text/plain" class="hidden" @change="handleManualRefreshTokenFileChange" />
     <input ref="cpaFileInputRef" type="file" accept=".json,application/json" multiple class="hidden" @change="handleCPAFileChange" />
   </div>
 </template>
@@ -1156,6 +1177,7 @@ const {
   oauthAuthorizeUrl,
   oauthRedirectUriPrefix,
   manualTokenText,
+  manualRefreshTokenText,
   sessionJsonText,
   accountGroups,
   proxyGroups,
@@ -1217,6 +1239,8 @@ const {
   setAccountGroupCustomProxyInput,
   importManualTokenText,
   importTokenTextFile,
+  importManualRefreshTokenText,
+  importRefreshTokenTextFile,
   importSessionJson,
   startOAuthLogin,
   openOAuthAuthorizeUrl,
@@ -1597,6 +1621,7 @@ function openGrokLoginCredentials(item: GrokAccount) {
 }
 
 const manualTokenFileInputRef = ref<HTMLInputElement | null>(null)
+const manualRefreshTokenFileInputRef = ref<HTMLInputElement | null>(null)
 const cpaFileInputRef = ref<HTMLInputElement | null>(null)
 const remoteImportBusy = ref(false)
 const accountToolbarMenuClass = 'shrink-0 whitespace-nowrap'
@@ -1657,6 +1682,18 @@ async function handleManualTokenFileChange(event: Event) {
   const target = event.target as HTMLInputElement | null
   const file = target?.files?.[0]
   await importTokenTextFile(file)
+  if (target) target.value = ''
+}
+function openManualRefreshTokenFile() {
+  if (!manualRefreshTokenFileInputRef.value || importBusy.value) return
+  manualRefreshTokenFileInputRef.value.value = ''
+  manualRefreshTokenFileInputRef.value.click()
+}
+
+async function handleManualRefreshTokenFileChange(event: Event) {
+  const target = event.target as HTMLInputElement | null
+  const file = target?.files?.[0]
+  await importRefreshTokenTextFile(file)
   if (target) target.value = ''
 }
 
