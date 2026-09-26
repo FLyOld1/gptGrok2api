@@ -876,21 +876,27 @@ export const accountsApi = {
   importRefreshTokens: async (
     tokens: string[],
     fallbackSourceType = 'refresh_token',
+    clientId = '',
   ) => {
     const refreshTokens = Array.from(new Set(tokens.map((token) => cleanString(token)).filter(Boolean)))
     if (!refreshTokens.length) {
       return { status: 'ok', added: 0, skipped: 0, refreshed: 0, errors: [] as string[] }
     }
-    const response = await apiClient.post<
-      {
-        refresh_tokens: string[]
-        source_type: string
-      },
-      BackendAccountMutationResponse
-    >('/api/accounts/import-refresh-tokens', {
+    const payload: {
+      refresh_tokens: string[]
+      source_type: string
+      client_id?: string
+    } = {
       refresh_tokens: refreshTokens,
       source_type: fallbackSourceType,
-    })
+    }
+    if (cleanString(clientId)) {
+      payload.client_id = cleanString(clientId)
+    }
+    const response = await apiClient.post<
+      typeof payload,
+      BackendAccountMutationResponse
+    >('/api/accounts/import-refresh-tokens', payload)
     return {
       status: 'ok',
       added: Number(response.added || 0),

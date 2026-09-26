@@ -122,6 +122,7 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
   const oauthRedirectUriPrefix = ref('')
   const manualTokenText = ref('')
   const manualRefreshTokenText = ref('')
+  const manualRefreshTokenClientId = ref('')
   const sessionJsonText = ref('')
   const toast = useToast()
   const confirmDialog = useConfirmDialog()
@@ -317,7 +318,7 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
         if (options.bulkProgress.bulkStopRequested.value) break
         const batch = normalizedTokens.slice(index, index + IMPORT_BATCH_SIZE)
         try {
-          const result = await accountsApi.importRefreshTokens(batch, sourceType)
+          const result = await accountsApi.importRefreshTokens(batch, sourceType, manualRefreshTokenClientId.value)
           addedCount += Number(result.added || 0)
           skippedCount += Number(result.skipped || 0)
           refreshedCount += Number(result.refreshed || 0)
@@ -497,6 +498,7 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
     oauthRedirectUriPrefix,
     manualTokenText,
     manualRefreshTokenText,
+    manualRefreshTokenClientId,
     sessionJsonText,
     setImportMode,
     openImportModal,

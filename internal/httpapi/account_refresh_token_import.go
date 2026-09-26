@@ -11,33 +11,65 @@ import (
 type importRefreshTokensRequest struct {
 	RefreshTokens []string `json:"refresh_tokens"`
 	Tokens        []string `json:"tokens"`
+	ClientID      string   `json:"client_id"`
 	SourceType    string   `json:"source_type"`
 }
 
-func extractRefreshTokenFromLine(raw string) string {
-	line := strings.TrimSpace(raw)
+type parsedRefreshTokenItem struct {
+	RefreshToken string
+	ClientID     string
+	Email        string
+	Password     string
+}
+
+func parseRefreshTokenLine(raw string, defaultClientID string) *parsedRefreshTokenItem {
+	line := strings.Trim(strings.TrimSpace(raw), "\"'` \t\r\n")
 	if line == "" || strings.HasPrefix(line, "#") {
-		return ""
+		return nil
 	}
+
+	item := &parsedRefreshTokenItem{
+		ClientID: strings.TrimSpace(defaultClientID),
+	}
+
 	if strings.Contains(line, "----") {
 		parts := strings.Split(line, "----")
-		for i := len(parts) - 1; i >= 0; i-- {
-			candidate := strings.TrimSpace(parts[i])
-			if candidate == "" {
+		for i, part := range parts {
+			val := strings.Trim(strings.TrimSpace(part), "\"'` \t\r\n")
+			if val == "" {
 				continue
 			}
-			if strings.HasPrefix(candidate, "rt_") {
-				return candidate
+			if strings.Contains(val, "@") && item.Email == "" {
+				item.Email = val
+				continue
 			}
-			if len(candidate) >= 20 && !strings.Contains(candidate, "@") {
-				return candidate
+			if strings.HasPrefix(val, "rt_") || strings.HasPrefix(val, "rt.") {
+				item.RefreshToken = val
+				continue
+			}
+			if (strings.HasPrefix(val, "app_") || strings.HasPrefix(val, "pdl") || (len(val) >= 20 && len(val) <= 45)) && item.ClientID == "" {
+				item.ClientID = val
+				continue
+			}
+			if len(val) >= 50 && item.RefreshToken == "" {
+				item.RefreshToken = val
+				continue
+			}
+			if i == 1 && item.Password == "" {
+				item.Password = val
 			}
 		}
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[len(parts)-1])
+		if item.RefreshToken == "" && len(parts) > 0 {
+			item.RefreshToken = strings.Trim(strings.TrimSpace(parts[len(parts)-1]), "\"'` \t\r\n")
 		}
+	} else {
+		item.RefreshToken = line
 	}
-	return line
+
+	if item.RefreshToken == "" {
+		return nil
+	}
+	return item
 }
 
 func (s *Server) importRefreshTokensAPI(w http.ResponseWriter, r *http.Request) {
@@ -53,14 +85,23 @@ func (s *Server) importRefreshTokensAPI(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	rawTokens := append(body.RefreshTokens, body.Tokens...)
-	var candidateTokens []string
+	defaultClientID := strings.TrimSpace(body.ClientID)
+
+	var candidateItems []*parsedRefreshTokenItem
+	seen := make(map[string]struct{})
 	for _, raw := range rawTokens {
-		if rt := extractRefreshTokenFromLine(raw); rt != "" {
-			candidateTokens = append(candidateTokens, rt)
+		item := parseRefreshTokenLine(raw, defaultClientID)
+		if item == nil || item.RefreshToken == "" {
+			continue
 		}
+		if _, ok := seen[item.RefreshToken]; ok {
+			continue
+		}
+		seen[item.RefreshToken] = struct{}{}
+		candidateItems = append(candidateItems, item)
 	}
-	candidateTokens = uniqueAccountRefs(candidateTokens)
-	if len(candidateTokens) == 0 {
+
+	if len(candidateItems) == 0 {
 		writeError(w, http.StatusBadRequest, "refresh_tokens is required", "invalid_request_error")
 		return
 	}
@@ -80,21 +121,28 @@ func (s *Server) importRefreshTokensAPI(w http.ResponseWriter, r *http.Request) 
 	skippedCount := 0
 	errorsOut := make([]map[string]any, 0)
 
-	for _, token := range candidateTokens {
-		token := token
+	for _, parsed := range candidateItems {
+		item := parsed
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			accountQuery := map[string]any{
+				"refresh_token": item.RefreshToken,
+			}
+			if item.ClientID != "" {
+				accountQuery["client_id"] = item.ClientID
+			}
+
 			ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-			result, refreshErr := s.openAIAccountClient().RefreshAccessToken(ctx, map[string]any{"refresh_token": token})
+			result, refreshErr := s.openAIAccountClient().RefreshAccessToken(ctx, accountQuery)
 			cancel()
 			if refreshErr != nil {
 				mu.Lock()
 				errorsOut = append(errorsOut, map[string]any{
-					"token": tokenPreview(token),
+					"token": tokenPreview(item.RefreshToken),
 					"error": safeRefreshError(refreshErr),
 				})
 				mu.Unlock()
@@ -103,7 +151,7 @@ func (s *Server) importRefreshTokensAPI(w http.ResponseWriter, r *http.Request) 
 
 			latestRT := strings.TrimSpace(result.RefreshToken)
 			if latestRT == "" {
-				latestRT = token
+				latestRT = item.RefreshToken
 			}
 
 			mu.Lock()
@@ -112,29 +160,29 @@ func (s *Server) importRefreshTokensAPI(w http.ResponseWriter, r *http.Request) 
 			items, listErr := s.store.AccountList()
 			if listErr != nil {
 				errorsOut = append(errorsOut, map[string]any{
-					"token": tokenPreview(token),
+					"token": tokenPreview(item.RefreshToken),
 					"error": safeRefreshError(listErr),
 				})
 				return
 			}
 
 			var matchedAccount map[string]any
-			for _, item := range items {
-				itemRT := stringValue(item["refresh_token"])
-				if itemRT != "" && (itemRT == token || itemRT == latestRT) {
-					matchedAccount = item
+			for _, current := range items {
+				currentRT := stringValue(current["refresh_token"])
+				if currentRT != "" && (currentRT == item.RefreshToken || currentRT == latestRT) {
+					matchedAccount = current
 					break
 				}
-				if accountToken(item) != "" && accountToken(item) == result.AccessToken {
-					matchedAccount = item
+				if accountToken(current) != "" && accountToken(current) == result.AccessToken {
+					matchedAccount = current
 					break
 				}
-				if uid := stringValue(result.Fields["user_id"]); uid != "" && stringValue(item["user_id"]) == uid {
-					matchedAccount = item
+				if uid := stringValue(result.Fields["user_id"]); uid != "" && stringValue(current["user_id"]) == uid {
+					matchedAccount = current
 					break
 				}
-				if email := stringValue(result.Fields["email"]); email != "" && strings.EqualFold(stringValue(item["email"]), email) {
-					matchedAccount = item
+				if email := stringValue(result.Fields["email"]); email != "" && strings.EqualFold(stringValue(current["email"]), email) {
+					matchedAccount = current
 					break
 				}
 			}
@@ -142,10 +190,20 @@ func (s *Server) importRefreshTokensAPI(w http.ResponseWriter, r *http.Request) 
 			if matchedAccount != nil {
 				oldToken := accountToken(matchedAccount)
 				if oldToken != "" {
-					_, _, rotErr := s.store.RotateAccountTokens(oldToken, result.AccessToken, latestRT, result.IDToken, result.Fields)
+					updates := cloneMap(result.Fields)
+					if item.ClientID != "" {
+						updates["client_id"] = item.ClientID
+					}
+					if item.Email != "" && stringValue(matchedAccount["email"]) == "" {
+						updates["email"] = item.Email
+					}
+					if item.Password != "" && stringValue(matchedAccount["login_password"]) == "" {
+						updates["login_password"] = item.Password
+					}
+					_, _, rotErr := s.store.RotateAccountTokens(oldToken, result.AccessToken, latestRT, result.IDToken, updates)
 					if rotErr != nil {
 						errorsOut = append(errorsOut, map[string]any{
-							"token": tokenPreview(token),
+							"token": tokenPreview(item.RefreshToken),
 							"error": safeRefreshError(rotErr),
 						})
 						return
@@ -164,13 +222,22 @@ func (s *Server) importRefreshTokensAPI(w http.ResponseWriter, r *http.Request) 
 				"enabled":       true,
 				"created_at":    time.Now().UTC().Format(time.RFC3339),
 			}
+			if item.ClientID != "" {
+				newAccount["client_id"] = item.ClientID
+			}
+			if item.Email != "" {
+				newAccount["email"] = item.Email
+			}
+			if item.Password != "" {
+				newAccount["login_password"] = item.Password
+			}
 			for k, v := range result.Fields {
 				newAccount[k] = v
 			}
 			added, _, _, addErr := s.store.AddAccounts(nil, []map[string]any{newAccount})
 			if addErr != nil {
 				errorsOut = append(errorsOut, map[string]any{
-					"token": tokenPreview(token),
+					"token": tokenPreview(item.RefreshToken),
 					"error": safeRefreshError(addErr),
 				})
 				return

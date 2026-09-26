@@ -948,6 +948,16 @@
                     title="导入 Refresh Token"
                     description="支持直接粘贴，一行一个；也支持从 TXT 文件读取，一行一个。导入后将自动通过 OAuth 换取 Access Token，支持自动续期。"
                   />
+                  <label class="block text-xs">
+                    <span class="ui-field-label">Client ID（可选）</span>
+                    <Input
+                      :model-value="manualRefreshTokenClientId"
+                      placeholder="留空默认官方 Client；如特定注册机/平台账号，可在行中包含或在此指定"
+                      block
+                      :disabled="importBusy"
+                      @update:model-value="manualRefreshTokenClientId = $event.trim()"
+                    />
+                  </label>
                   <textarea
                     v-model.trim="manualRefreshTokenText"
                     rows="10"
@@ -1178,6 +1188,7 @@ const {
   oauthRedirectUriPrefix,
   manualTokenText,
   manualRefreshTokenText,
+  manualRefreshTokenClientId,
   sessionJsonText,
   accountGroups,
   proxyGroups,

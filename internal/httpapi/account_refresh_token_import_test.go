@@ -11,22 +11,38 @@ import (
 	"github.com/auucoder/gptgrok2api-go/internal/config"
 )
 
-func TestExtractRefreshTokenFromLine(t *testing.T) {
+func TestParseRefreshTokenLine(t *testing.T) {
 	cases := []struct {
-		input    string
-		expected string
+		input            string
+		defaultCID       string
+		expectedToken    string
+		expectedClientID string
 	}{
-		{"", ""},
-		{"# some comment", ""},
-		{"   rt_test_token_12345   ", "rt_test_token_12345"},
-		{"user@example.com----password123----app_client_id----rt_refresh_token_secret", "rt_refresh_token_secret"},
-		{"user@example.com----password123----1234567890123456789012345", "1234567890123456789012345"},
+		{"", "", "", ""},
+		{"# some comment", "", "", ""},
+		{"   rt_test_token_12345   ", "", "rt_test_token_12345", ""},
+		{"\"rt.1.test_token_quoted\"", "", "rt.1.test_token_quoted", ""},
+		{"user@example.com----password123----app_client_id_custom----rt_refresh_token_secret", "", "rt_refresh_token_secret", "app_client_id_custom"},
+		{"user@example.com----password123----app_client_id_custom----rt.1.secret_12345", "", "rt.1.secret_12345", "app_client_id_custom"},
 	}
 
 	for _, c := range cases {
-		actual := extractRefreshTokenFromLine(c.input)
-		if actual != c.expected {
-			t.Errorf("extractRefreshTokenFromLine(%q) = %q, expected %q", c.input, actual, c.expected)
+		actual := parseRefreshTokenLine(c.input, c.defaultCID)
+		if c.expectedToken == "" {
+			if actual != nil {
+				t.Errorf("parseRefreshTokenLine(%q) expected nil, got %+v", c.input, actual)
+			}
+			continue
+		}
+		if actual == nil {
+			t.Errorf("parseRefreshTokenLine(%q) expected item, got nil", c.input)
+			continue
+		}
+		if actual.RefreshToken != c.expectedToken {
+			t.Errorf("parseRefreshTokenLine(%q) RefreshToken = %q, expected %q", c.input, actual.RefreshToken, c.expectedToken)
+		}
+		if actual.ClientID != c.expectedClientID {
+			t.Errorf("parseRefreshTokenLine(%q) ClientID = %q, expected %q", c.input, actual.ClientID, c.expectedClientID)
 		}
 	}
 }

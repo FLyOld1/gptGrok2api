@@ -237,6 +237,7 @@ export function useAccountsPage() {
   const oauthRedirectUriPrefix = accountImport.oauthRedirectUriPrefix
   const manualTokenText = accountImport.manualTokenText
   const manualRefreshTokenText = accountImport.manualRefreshTokenText
+  const manualRefreshTokenClientId = accountImport.manualRefreshTokenClientId
   const sessionJsonText = accountImport.sessionJsonText
 
   const accountBulkActions = useAccountBulkActionsRuntime({
@@ -459,6 +460,7 @@ export function useAccountsPage() {
     oauthRedirectUriPrefix,
     manualTokenText,
     manualRefreshTokenText,
+    manualRefreshTokenClientId,
     sessionJsonText,
     accountGroups,
     proxyGroups,

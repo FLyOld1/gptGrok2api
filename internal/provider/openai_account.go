@@ -417,7 +417,11 @@ func (c *OpenAIAccountClient) refreshOAuth(ctx context.Context, refreshToken str
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
-	form.Set("client_id", openAIOAuthClientID)
+	clientID := aiString(account, "client_id", "clientId", "app_client_id")
+	if clientID == "" {
+		clientID = openAIOAuthClientID
+	}
+	form.Set("client_id", clientID)
 	req, err := http.NewRequestWithContext(proxyruntime.WithURL(ctx, c.ProxyURL(account)), http.MethodPost, c.OAuthURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return AccountRefreshResult{}, err
