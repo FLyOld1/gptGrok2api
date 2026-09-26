@@ -24,6 +24,7 @@ func TestParseRefreshTokenLine(t *testing.T) {
 		{"\"rt.1.test_token_quoted\"", "", "rt.1.test_token_quoted", ""},
 		{"user@example.com----password123----app_client_id_custom----rt_refresh_token_secret", "", "rt_refresh_token_secret", "app_client_id_custom"},
 		{"user@example.com----password123----app_client_id_custom----rt.1.secret_12345", "", "rt.1.secret_12345", "app_client_id_custom"},
+		{`{"tokens":{"refresh_token":"rt.1.json_test","client_id":"app_custom_json"}}`, "", "rt.1.json_test", "app_custom_json"},
 	}
 
 	for _, c := range cases {

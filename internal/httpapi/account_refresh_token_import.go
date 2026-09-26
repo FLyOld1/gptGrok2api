@@ -2,11 +2,38 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
+
+func extractClientIDFromJWT(jwtToken string) string {
+	parts := strings.Split(jwtToken, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims map[string]any
+	if json.Unmarshal(raw, &claims) != nil {
+		return ""
+	}
+	if cid := stringValue(claims["client_id"]); cid != "" {
+		return cid
+	}
+	if aud, ok := claims["aud"].([]any); ok && len(aud) > 0 {
+		first := stringValue(aud[0])
+		if strings.HasPrefix(first, "app_") || strings.HasPrefix(first, "pdl") {
+			return first
+		}
+	}
+	return ""
+}
 
 type importRefreshTokensRequest struct {
 	RefreshTokens []string `json:"refresh_tokens"`
@@ -32,6 +59,32 @@ func parseRefreshTokenLine(raw string, defaultClientID string) *parsedRefreshTok
 		ClientID: strings.TrimSpace(defaultClientID),
 	}
 
+	if strings.HasPrefix(line, "{") && strings.HasSuffix(line, "}") {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(line), &obj); err == nil {
+			tokensMap := mapValue(obj["tokens"])
+			if len(tokensMap) == 0 {
+				tokensMap = obj
+			}
+			rt := stringValue(tokensMap["refresh_token"])
+			if rt == "" {
+				rt = stringValue(tokensMap["refreshToken"])
+			}
+			if rt != "" {
+				item.RefreshToken = rt
+				item.Email = firstNonEmpty(stringValue(tokensMap["email"]), stringValue(obj["email"]))
+				at := stringValue(tokensMap["access_token"])
+				idToken := stringValue(tokensMap["id_token"])
+				if item.ClientID == "" && at != "" {
+					item.ClientID = extractClientIDFromJWT(at)
+				}
+				if item.ClientID == "" && idToken != "" {
+					item.ClientID = extractClientIDFromJWT(idToken)
+				}
+				return item
+			}
+		}
+	}
 	if strings.Contains(line, "----") {
 		parts := strings.Split(line, "----")
 		for i, part := range parts {

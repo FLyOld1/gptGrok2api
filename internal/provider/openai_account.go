@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	openAIOAuthClientID = "app_2SKx67EdpoN0G6j64fRvigXD"
-	openAIUserAgent     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
-	openAIClientVersion = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
-	openAIClientBuild   = "6708908"
+	openAIOAuthClientID  = "app_2SKx67EdpoN0G6j64fRvigXD"
+	openAICodexClientID  = "app_EMoamEEZ73f0CkXaXp7hrann"
+	openAIMobileClientID = "pdlLIX2Y72MIlIKLKKjrippiKgUzdaMw"
+	openAIUserAgent      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+	openAIClientVersion  = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
+	openAIClientBuild    = "6708908"
 )
 
 var ErrInvalidAccessToken = errors.New("openai access token is invalid")
@@ -133,6 +135,9 @@ func (c *OpenAIAccountClient) RefreshAccount(ctx context.Context, account map[st
 	if err != nil {
 		return AccountRefreshResult{}, err
 	}
+	for k, v := range rotated.Fields {
+		fields[k] = v
+	}
 	rotated.Fields = fields
 	return rotated, nil
 }
@@ -152,6 +157,9 @@ func (c *OpenAIAccountClient) RefreshAccessToken(ctx context.Context, account ma
 	fields, err := c.fetchUserInfo(ctx, rotated.AccessToken, account)
 	if err != nil {
 		return AccountRefreshResult{}, fmt.Errorf("新 access token 验证失败: %w", err)
+	}
+	for k, v := range rotated.Fields {
+		fields[k] = v
 	}
 	rotated.Fields = fields
 	return rotated, nil
@@ -414,35 +422,66 @@ func (c *OpenAIAccountClient) refreshClearance(ctx context.Context, proxyURL, me
 }
 
 func (c *OpenAIAccountClient) refreshOAuth(ctx context.Context, refreshToken string, account map[string]any) (AccountRefreshResult, error) {
-	form := url.Values{}
-	form.Set("grant_type", "refresh_token")
-	form.Set("refresh_token", refreshToken)
-	clientID := aiString(account, "client_id", "clientId", "app_client_id")
-	if clientID == "" {
-		clientID = openAIOAuthClientID
+	specifiedCID := aiString(account, "client_id", "clientId", "app_client_id")
+	candidateCIDs := make([]string, 0, 4)
+	if specifiedCID != "" {
+		candidateCIDs = append(candidateCIDs, specifiedCID)
 	}
-	form.Set("client_id", clientID)
-	req, err := http.NewRequestWithContext(proxyruntime.WithURL(ctx, c.ProxyURL(account)), http.MethodPost, c.OAuthURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return AccountRefreshResult{}, err
+	for _, cid := range []string{openAICodexClientID, openAIOAuthClientID, openAIMobileClientID} {
+		if !strings.EqualFold(cid, specifiedCID) {
+			candidateCIDs = append(candidateCIDs, cid)
+		}
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", openAIUserAgent)
-	response, err := c.HTTP.Do(req)
-	if err != nil {
-		return AccountRefreshResult{}, err
-	}
-	defer response.Body.Close()
-	var value map[string]any
-	_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&value)
-	accessToken := aiString(value, "access_token")
-	if response.StatusCode != http.StatusOK || accessToken == "" {
+
+	var lastErr error
+	for _, clientID := range candidateCIDs {
+		form := url.Values{}
+		form.Set("grant_type", "refresh_token")
+		form.Set("refresh_token", refreshToken)
+		form.Set("client_id", clientID)
+
+		req, err := http.NewRequestWithContext(proxyruntime.WithURL(ctx, c.ProxyURL(account)), http.MethodPost, c.OAuthURL, strings.NewReader(form.Encode()))
+		if err != nil {
+			return AccountRefreshResult{}, err
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("User-Agent", openAIUserAgent)
+
+		response, err := c.HTTP.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var value map[string]any
+		_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&value)
+		response.Body.Close()
+
+		accessToken := aiString(value, "access_token")
+		if response.StatusCode == http.StatusOK && accessToken != "" {
+			fields := map[string]any{
+				"client_id": clientID,
+			}
+			return AccountRefreshResult{
+				AccessToken:  accessToken,
+				RefreshToken: aiString(value, "refresh_token"),
+				IDToken:      aiString(value, "id_token"),
+				Fields:       fields,
+			}, nil
+		}
+
 		detail := aiString(value, "error_description", "error", "message")
-		return AccountRefreshResult{}, fmt.Errorf("oauth refresh HTTP %d: %s", response.StatusCode, detail)
+		lastErr = fmt.Errorf("oauth refresh HTTP %d: %s", response.StatusCode, detail)
+		errLower := strings.ToLower(detail)
+		if strings.Contains(errLower, "invalid_grant") || strings.Contains(errLower, "revoked") || strings.Contains(errLower, "expired") {
+			return AccountRefreshResult{}, lastErr
+		}
 	}
-	return AccountRefreshResult{AccessToken: accessToken, RefreshToken: aiString(value, "refresh_token"), IDToken: aiString(value, "id_token")}, nil
-}
+
+	if lastErr != nil {
+		return AccountRefreshResult{}, lastErr
+	}
+	return AccountRefreshResult{}, errors.New("oauth refresh failed on all candidate client IDs")
 
 func (c *OpenAIAccountClient) ProxyURL(account map[string]any) string {
 	if c.Proxy == nil {

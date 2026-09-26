@@ -29,32 +29,67 @@ function parseTokenLines(text: string) {
       .filter((line) => line && !line.startsWith('#')),
   )
 }
+function extractClientIDFromJWT(jwtToken: string): string {
+  try {
+    const parts = jwtToken.split('.')
+    if (parts.length < 2) return ''
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(decodeURIComponent(escape(atob(base64))))
+    if (payload.client_id) return String(payload.client_id).trim()
+    if (Array.isArray(payload.aud) && payload.aud.length > 0) {
+      const aud = String(payload.aud[0]).trim()
+      if (aud.startsWith('app_') || aud.startsWith('pdl')) return aud
+    }
+  } catch {}
+  return ''
+}
+
 function extractRefreshTokenFromLine(raw: string): string {
-  const line = raw.trim()
+  let line = raw.trim()
+  line = line.replace(/^["'`]+|["'`]+$/g, '').trim()
   if (!line || line.startsWith('#')) return ''
   if (line.includes('----')) {
     const parts = line.split('----')
     for (let i = parts.length - 1; i >= 0; i--) {
-      const candidate = parts[i].trim()
+      const candidate = parts[i].trim().replace(/^["'`]+|["'`]+$/g, '').trim()
       if (!candidate) continue
-      if (candidate.startsWith('rt_')) return candidate
+      if (candidate.startsWith('rt_') || candidate.startsWith('rt.')) return candidate
       if (candidate.length >= 20 && !candidate.includes('@')) return candidate
     }
-    if (parts.length > 0) return parts[parts.length - 1].trim()
+    if (parts.length > 0) return parts[parts.length - 1].trim().replace(/^["'`]+|["'`]+$/g, '').trim()
   }
   return line
 }
 
-function parseRefreshTokenLines(text: string) {
-  return uniqueTokens(
+function parseRefreshTokenLines(text: string): { tokens: string[]; autoClientId?: string } {
+  const trimmed = text.trim()
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const obj = JSON.parse(trimmed)
+      const tokensMap = (obj.tokens && typeof obj.tokens === 'object') ? obj.tokens : obj
+      const rt = String(tokensMap.refresh_token || tokensMap.refreshToken || '').trim()
+      if (rt) {
+        let autoCid = ''
+        const at = String(tokensMap.access_token || tokensMap.accessToken || '').trim()
+        const idToken = String(tokensMap.id_token || tokensMap.idToken || '').trim()
+        if (at) autoCid = extractClientIDFromJWT(at)
+        if (!autoCid && idToken) autoCid = extractClientIDFromJWT(idToken)
+        return { tokens: [rt], autoClientId: autoCid }
+      }
+    } catch {}
+  }
+
+  const tokens = uniqueTokens(
     text
       .split(/\r?\n/)
       .map(extractRefreshTokenFromLine)
       .filter(Boolean),
   )
+  return { tokens }
 }
 
 type AccountImportPayload = Record<string, unknown>
+
 
 function accountPayloadToken(value: unknown): string {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
@@ -368,7 +403,11 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
   }
 
   async function importManualRefreshTokenText() {
-    await importRefreshTokenBatch(parseRefreshTokenLines(manualRefreshTokenText.value), 'refresh_token', '导入 Refresh Token')
+    const { tokens, autoClientId } = parseRefreshTokenLines(manualRefreshTokenText.value)
+    if (autoClientId && !manualRefreshTokenClientId.value) {
+      manualRefreshTokenClientId.value = autoClientId
+    }
+    await importRefreshTokenBatch(tokens, 'refresh_token', '导入 Refresh Token')
   }
 
   async function importRefreshTokenTextFile(file: File | null | undefined) {
